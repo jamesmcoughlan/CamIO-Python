@@ -1,4 +1,4 @@
-#stylus-explorer.py
+#explorer.py
 
 #First calculate ground plane:
 #either put marker on the table and press the 0 key,

@@ -4,6 +4,7 @@
 import numpy as np
 import cv2
 from utilities import dict2list
+import pygame
 
 points_for_plotting_xyz_axes = np.array(((0.,0.,0.), (1.,0.,0.), (0.,1.,0.), (0.,0.,1.))) #p0, px, py, pz for plotting xyz axes
 XYZ_AXES_LENGTH = 10. #length of axes to display, in cm
@@ -73,3 +74,11 @@ def plot_hotspots(frameBGR, hotspots, current_hotspot, rvec, tvec, mtx, dist): #
 
 	return frameBGR
 
+def update_display(screen, frameBGR, decimation): #using pygame
+	frameRGB = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2RGB)
+	frameRGB = np.rot90(frameRGB) #I have no idea why this is necessary!
+	frameRGB = frameRGB[::decimation,::decimation,:]
+	frameRGB = pygame.surfarray.make_surface(frameRGB)
+	frameRGB = pygame.transform.flip(frameRGB, True, False) #otherwise image is mirror reversed
+	screen.blit(frameRGB, (0,0))
+	pygame.display.update()

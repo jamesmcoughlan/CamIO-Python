@@ -1,6 +1,6 @@
 #explorer-pygame-display.py
 #(c) James Coughlan, Smith-Kettlewell Eye Research Institute
-#This modifies explorer.py by displaying graphics using pygame rather than OpenCV.
+#This modifies explorer.py by displaying graphics using pygame rather than OpenCV, and using pygame to capture key presses.
 #Motivation: pygame.mixer.Channel doesn't work properly without using the pygame.display
 
 #First calculate ground plane:
@@ -14,6 +14,7 @@
 import numpy as np
 import cv2
 import time
+import sys
 from utilities import load_object, save_object, dist2hotspots3D
 from stylus import detectMarkers_clean, Stylus, Markers
 from sounds import Sounds, AMBIENT_PERIOD
@@ -24,6 +25,7 @@ from parameters import *
 from UI import *
 from smoothing import Smoothing
 import pygame
+from pygame.locals import *
 
 #############################################################
 camera = CAMERAS[which_camera]
@@ -56,68 +58,64 @@ pygame.init()
 screen = pygame.display.set_mode([int(camera_object.w/decimation),int(camera_object.h/decimation)])
 
 #############################################################
-while True: #main video frame capture loop
-	cnt += 1
-	timestamp = time.time() - timestamp0
-	ret, frameBGR = cap.read()
-	keyval = cv2.waitKey(30) & 0xFF
-	
-	gray = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2GRAY)	
-	corners, ids = detectMarkers_clean(gray, marker_object.arucodict, marker_object.arucodetectparam)
-	
-	frameBGR = plot_corners(frameBGR, corners, ids)
-	
-	if keyval == ord('0'):
-		plane_pose, Tca = scan_ground_plane_marker(corners, ids, camera_object, sound_object)
-
-	stylus_object.apply_image(corners, ids)
-	if stylus_object.visible:
-		frameBGR = plot_stylus_camera(frameBGR, stylus_object.tip_XYZ[0],stylus_object.tip_XYZ[1],stylus_object.tip_XYZ[2], camera_object.mtx, camera_object.dist)
-		if keyval == ord('1'):
-			stylus_info_at_location_1 = save_stylus_info(stylus_object, sound_object)
-		if keyval == ord('2'):
-			stylus_info_at_location_2 = save_stylus_info(stylus_object, sound_object)
-			plane_pose, Tac = estimate_ground_plane_from_two_stylus_scans(stylus_info_at_location_1, stylus_info_at_location_2, sound_object)
-		if keyval == ord('a'):
-			stylus_info_at_location_a = save_stylus_info(stylus_object, sound_object)
-		if keyval == ord('b'):
-			stylus_info_at_location_b = save_stylus_info(stylus_object, sound_object)
-		if pose_known:
-			stylus_location_XYZ_anno = estimate_stylus_location_in_annotation_coors(stylus_object.tip_XYZ, Tca, sound_object)
-			if keyval == ord('4'):
-				print('stylus XYZ location in annotation coordinates:', stylus_location_XYZ_anno)
-
-	if pose_known:
-		frameBGR = plot_hotspots(frameBGR, hotspots, current_hotspot, pose[0], pose[1], camera_object.mtx, camera_object.dist)
-		obs = quantize_location(stylus_object.visible, stylus_location_XYZ_anno, hotspots)
-		obs_smoothed = smoothing_object.add_observation(obs, timestamp)
-		current_hotspot, obs_smoothed_old = take_action(obs_smoothed, obs_smoothed_old, sound_object)
-
-	if keyval == ord('3'):
-		pose_known, pose, Tca = estimate_pose(stylus_info_at_location_a, stylus_info_at_location_b, plane_pose, np.array(hotspots[anchor_1_ind]),
-											  np.array(hotspots[anchor_2_ind]), sound_object)
-
-	#ambient sound:
-	if timestamp >= next_scheduled_ambient_sound:
-		next_scheduled_ambient_sound = timestamp + AMBIENT_PERIOD
+try:
+	while True: #main video frame capture loop
+		cnt += 1
+		timestamp = time.time() - timestamp0
+		ret, frameBGR = cap.read()
+		gray = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2GRAY)
+		corners, ids = detectMarkers_clean(gray, marker_object.arucodict, marker_object.arucodetectparam)
+		stylus_object.apply_image(corners, ids)
+		frameBGR = plot_corners(frameBGR, corners, ids)
 		if stylus_object.visible:
-			sound_object.play_ambient_visible()
-		else:
-			sound_object.play_ambient_invisible()
+			frameBGR = plot_stylus_camera(frameBGR, stylus_object.tip_XYZ[0],stylus_object.tip_XYZ[1],stylus_object.tip_XYZ[2], camera_object.mtx, camera_object.dist)
+			if pose_known:
+				stylus_location_XYZ_anno = estimate_stylus_location_in_annotation_coors(stylus_object.tip_XYZ, Tca, sound_object)
 
-	update_display(screen, frameBGR, decimation)
-	'''
-	frameRGB = cv2.cvtColor(frameBGR, cv2.COLOR_BGR2RGB)
-	frameRGB = np.rot90(frameRGB) #I have no idea why this is necessary!
-	frameRGB = frameRGB[::decimation,::decimation,:]
-	frameRGB = pygame.surfarray.make_surface(frameRGB)
-	frameRGB = pygame.transform.flip(frameRGB, True, False) #otherwise image is mirror reversed
-	screen.blit(frameRGB, (0,0))
-	pygame.display.update()
-	'''
+		if pose_known:
+			frameBGR = plot_hotspots(frameBGR, hotspots, current_hotspot, pose[0], pose[1], camera_object.mtx, camera_object.dist)
+			obs = quantize_location(stylus_object.visible, stylus_location_XYZ_anno, hotspots)
+			obs_smoothed = smoothing_object.add_observation(obs, timestamp)
+			current_hotspot, obs_smoothed_old = take_action(obs_smoothed, obs_smoothed_old, sound_object)
 
-	cv2.imshow('frame',frameBGR[::decimation,::decimation,:])
-	
-	if keyval == 27: #Escape key
-		quit_video(cap)
-		break
+		#ambient sound:
+		if timestamp >= next_scheduled_ambient_sound:
+			next_scheduled_ambient_sound = timestamp + AMBIENT_PERIOD
+			if stylus_object.visible:
+				sound_object.play_ambient_visible()
+			else:
+				sound_object.play_ambient_invisible()
+
+		update_display(screen, frameBGR, decimation)
+
+		#handle key presses:
+		for event in pygame.event.get():
+			if event.type == KEYDOWN:
+				if event.key == pygame.K_0:
+					plane_pose, Tca = scan_ground_plane_marker(corners, ids, camera_object, sound_object)
+
+				if stylus_object.visible:
+					if event.key == pygame.K_1:
+						stylus_info_at_location_1 = save_stylus_info(stylus_object, sound_object)
+					if event.key == pygame.K_2:
+						stylus_info_at_location_2 = save_stylus_info(stylus_object, sound_object)
+						plane_pose, Tac = estimate_ground_plane_from_two_stylus_scans(stylus_info_at_location_1, stylus_info_at_location_2, sound_object)
+					if event.key == pygame.K_a:
+						stylus_info_at_location_a = save_stylus_info(stylus_object, sound_object)
+					if event.key == pygame.K_b:
+						stylus_info_at_location_b = save_stylus_info(stylus_object, sound_object)
+					if pose_known:
+						if event.key == pygame.K_4:
+							print('stylus XYZ location in annotation coordinates:', stylus_location_XYZ_anno)
+
+				if event.key == pygame.K_3:
+					pose_known, pose, Tca = estimate_pose(stylus_info_at_location_a, stylus_info_at_location_b, plane_pose, np.array(hotspots[anchor_1_ind]),
+														  np.array(hotspots[anchor_2_ind]), sound_object)
+
+				if event.key == pygame.K_ESCAPE:
+					quit_video(cap)
+					sys.exit(0)
+
+except (KeyboardInterrupt,SystemExit):
+	pygame.quit()
+	#cv2.destroyAllWindows()
